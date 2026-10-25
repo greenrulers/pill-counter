@@ -78,7 +78,7 @@ PillEye（韓國 Medility）、Pill Counting 等商業 app 以相機即時或拍
 
 ## REA 分析
 
-這台 Mac 裝了 REA（Reverse Engineer Anything）。用它對本專案做過靜態分析與正式網址的網頁 bundle 分析（對外端點 0 個，驗證「不上傳」），也對 PillEye 官網做過檢查（沒有瀏覽器端計數，計數在原生 app 的深度學習模型）。做法、結果、刻意沒做的事（不反編譯商業 app 安裝檔）見 [docs/REA分析.md](docs/REA分析.md)。
+這台 Mac 裝了 REA（Reverse Engineer Anything）。用它對本專案做過靜態分析與正式網址的網頁 bundle 分析（對外端點 0 個，驗證「不上傳」），對 PillEye 官網做過檢查，也在組長親自下載並同意後，對 PillEye Android 3.14.0 安裝檔做了結構分析：Flutter 應用，安裝檔內沒有任何模型檔，Android 版拍照計數是把照片上傳到 pilleye.io 雲端推論，即時模式只在 iOS 且需專用托盤硬體；原生端的「裝置內偵測」是回傳寫死數值的占位實作。沒有反編譯、複製其程式或模型。做法與結果見 [docs/REA分析.md](docs/REA分析.md)。
 
 ## 授權
 

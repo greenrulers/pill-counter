@@ -44,26 +44,54 @@ rea analyze-web-bundle http://127.0.0.1:9222 <targetId> --observation-ms 4000 --
 
 推論：PillEye 的計數是**原生 app 內的深度學習偵測模型**（模型持續用新資料更新），並另售雲端 API。這與創辦人訪談（訓練多個模型、反覆處理例外，準確率 98.7% → 99.2%）一致。
 
-### 安裝檔（沒有做）
+### 安裝檔（2026-10-25 晚，已做：Android 3.14.0 結構分析）
 
-- iOS 的 IPA 受 FairPlay 加密，要越獄裝置才能取得可分析的二進位檔。
-- Android APK 只能從第三方鏡像站下載（未授權的轉載來源，也是下載未知檔案）；這一步需要組長明確同意才會做。
-- 就算分析，也只看結構性資訊（用哪個推論框架、模型輸入尺寸、是否完全離線、有無上傳），**不複製其模型或程式碼**——那是著作權問題，和非營利無關。
-- 這台 Mac 也還沒裝 APK 分析引擎：`rea doctor` 顯示 jadx／apktool／Ghidra 皆未設定。
+組長親自從 APKPure 下載 PillEye 的 Android 安裝檔並同意只做結構分析後，用 REA＋androguard 做了靜態分析。**沒有安裝、沒有執行、沒有呼叫它的伺服器、沒有複製任何程式碼或模型**；分析用的解壓檔與完整輸出留在 session 暫存區，不進 repo，這裡只放結論與 REA 的 Flutter 辨識證據（`docs/rea-evidence/`）。
 
-## 4. 若之後要用 REA 分析一個合法取得的 APK
+**檔案身分**
+
+| 項目 | 內容 |
+|---|---|
+| 檔名／來源 | `PillEye – tablet, pill counter_3.14.0_APKPure.xapk`（APKPure 鏡像） |
+| 大小 | 57,929,439 bytes（55.2 MiB） |
+| SHA-256 | `fde534189e6ef3b4f55fd5935d4d5b3518f2a8459072516fc47613a492be9033`（與 APKPure 頁面公布值一致） |
+| 套件 | `com.rocateer.mediscount`，versionName 3.14.0，versionCode 817，minSdk 24，targetSdk 36 |
+| 組成 | base 36.3 MB＋`config.arm64_v8a` 21.5 MB＋語言／密度分包；manifest 有 `com.android.stamp.source = play.google.com/store`，是 Play 原始分發的 split APK |
+
+**框架與依賴**（`rea identify-flutter-build`、`rea extract-artifact`、androguard 4.1.4）
+
+- Flutter 應用：`libflutter.so` build-id `2bb32ee9…`、Dart AOT 快照 hash `1ce86630…`，用 Android NDK clang 19.0.1 編譯。Dart 端套件名 `pilleye_flutter`，約 150 個 .dart 檔（controllers／screens／service／widgets）。原生殼 `com.rocateer.mediscount.MainActivity`（Kotlin，R8 混淆成單字母套件）。
+- 主要套件：Sentry（錯誤回報＋畫面重播）、Firebase Core／Messaging（analytics 關閉）、Play Billing 8.0.0（訂閱）、Google ML Kit **條碼掃描** 18.3.1（`com.google.mlkit.vision.DEPENDENCIES = barcode`，只有條碼）、CameraX（camera2／core／lifecycle／video／view）、flutter_inappwebview（首頁是 WebView）、go_router、GetX、sqflite、chopper／http、Tolgee（多語翻譯）、video_player（內建 40 支 en／ja／ko 教學影片）。
+- 權限：CAMERA、INTERNET、ACCESS_NETWORK_STATE、ACCESS_WIFI_STATE、WAKE_LOCK、POST_NOTIFICATIONS、BILLING、FCM RECEIVE。沒有儲存、定位、麥克風權限。
+
+**核心發現：Android 版的計數在雲端，不在手機裡**
+
+1. 安裝檔內 **0 個模型檔**（沒有 .tflite／.onnx／.pb／.mlmodel），arm64 原生庫只有 Flutter、Sentry、CameraX、dart_jni；沒有 TensorFlow Lite、ONNX Runtime、OpenCV、ncnn。dex 裡的 `tflite` 字串全部屬於 Google ML Kit 內部（`tflite_dynamite`，條碼用）。
+2. 原生 MethodChannel `pilleye.io/camera` 的 `prepareModel` 直接回傳空字串；`predictWithBytes` 收到 width／height／image 後只印出參數，回傳**寫死的** `{"count": 1, "boxes": [{"x": 50, "y": 50, "width": 20, "height": 50}]}`——是占位實作，不是推論。
+3. pigeon 介面 `PilleyeCameraController` 的 17 個方法（含 activatePillDetection、activateTrayDetection、takePillDetection）Android 都有註冊，但回報結果用的 `handlePillDetected`、`handleTrayDetected`、`handlePillCount`、`handleDetectionResults`、`handleExternalCameraConnection` **只存在 Dart 端**，Android 原生程式從未發送。Android 原生只做相機預覽、縮放、拍照、條碼、方向。
+4. 文案證實：「Currently Live mode is only available on iOS」「Live Mode … compatible only with iOS 16 or later … iPhone 11 or later」「Please wait a little while for Android」。即時（Live）模式只在 iOS 版，推測用 Core ML／Neural Engine；另需 PillEye Stand 專用托盤硬體（`pilleye_hardware_modal`、`mount_detector`、Prism 模式）。
+5. 拍照（Photo）模式流程：`pilleye.io/image` 的 `toJPEG` 把 YUV 影格轉 JPEG → Dart `image_service.dart` 用 `MultipartFile` 上傳到 `api-v2.pilleye.io`／`mobile-v2.pilleye.io` 的 `/images/`、`/images/summary` → 回應 `PredictResult.fromJson`（欄位 predictions、boxes、confidence、label、pill_count、dots、image_id、thumbnail_url）。文案「PillEye saves the image for AI analysis」「Count up to 500 pills from a single photo」「10 free shots per day」。**照片會離開手機**。
+6. 其他：Rx 條碼查藥走 `/drug-products/barcode/`（韓、日藥品庫）；偵測與即時畫面日誌送 `log.data.medility.net`；`.env` 內含 Tolgee 翻譯服務金鑰與健康檢查密鑰的鍵名（值未記錄、未使用）。
+
+**沒做、不做的事**：沒有反編譯出可讀原始碼（REA 的 JADX 引擎未設定，androguard 只看類別、字串與指令流）；沒有呼叫其 API；沒有試圖取得其雲端模型；留在暫存區的解壓檔隨 session 清掉。
+
+## 4. 這次實際用的指令
 
 ```bash
-rea doctor                                    # 看缺哪些引擎
-rea extract-artifact <app.apk> --output <空資料夾>   # 安全解壓：看 assets/ 有無 .tflite .onnx .mlmodel、lib/ 有無 libtensorflowlite libonnxruntime libopencv
-rea identify-flutter-build <app.apk>          # 是否 Flutter（純解析，不需引擎）
-rea decode-android-resources <app.apk>        # 需 apktool
-rea analyze <app.apk> / rea decompile ...     # 需 JADX（REA_JADX_MCP_JAR）或 Ghidra（GHIDRA_INSTALL_DIR）
-rea evidence-export ...                       # 保存證據
+shasum -a 256 <xapk>                                   # 核對 APKPure 公布的 SHA-256
+rea extract-artifact <xapk> --format json             # 安全解壓、產生 artifact graph（8 節點）
+rea identify-flutter-build <config.arm64_v8a.apk>     # Flutter 偵測、libapp/libflutter 雜湊、snapshot hash、toolchain
+rea inspect-android-package <base.apk>                # 需 REA_JADX_MCP_JAR，未設 → 改用 androguard
+uv run --with androguard==4.1.4 python -I <腳本> <apk>  # manifest、元件、權限、類別套件直方圖、字串 xref、方法指令流
+strings libapp.so | grep 'package:pilleye_flutter/'    # Dart AOT 快照裡的模組結構、網址、pigeon 通道
 ```
+
+`rea doctor`：Hopper／Ghidra／IDA／JADX／Kuna 皆未設定；這次只用到不需引擎的 extract-artifact 與 identify-flutter-build，Java 層用 androguard 補。
 
 ## 5. 對本專案的啟示
 
-1. PillEye 類 app 的差異化在「即時模式、一次 1,000 顆、半錠與透明膠囊」，靠資料驅動的偵測模型。本專案的古典方法（背景色距離＋距離轉換）對**透明膠囊、重疊堆疊**會弱；第二階段若要追上，用自己拍的照片訓練小型偵測模型（YOLO → ONNX，在瀏覽器用 onnxruntime-web 離線跑）。
-2. 「不上傳」是可以被驗證的：REA 的端點清單為 0。之後每次改版可重跑第 1、2 節，並用 `rea compare-application-versions` 做回歸比對。
-3. 即時模式、拍照模式、人工修正、紀錄分享，是這類 app 的共同骨架；本專案都有，差在模型能力與實拍驗證。
+1. **隱私取捨不同**：Android 版 PillEye 的拍照計數是雲端推論，照片上傳；本專案完全離線（REA 端點清單 0 個）。藥局情境下病人處方量不離開手機，本專案的取捨更合適，之後文宣可以明講。
+2. **即時模式的門檻**：PillEye 的 Live 綁 iPhone 11＋iOS 16 與專用托盤硬體，不是純軟體就能做到；本專案 PWA 的「連拍」模式沒有即時 AI，但跨平台、零硬體。
+3. **結果結構**：對方回傳 boxes＋confidence＋label＋dots，和本專案 `pills[{x,y,r,uncertain}]` 概念一致；第二階段若訓練小型 YOLO→ONNX，輸出就照這個概念設計（概念層次，不是程式碼）。
+4. PillEye 的差異化（透明膠囊、半錠、1,000 顆）靠資料驅動模型與硬體；本專案的古典方法對透明膠囊、重疊堆疊會弱，要補就靠自己拍的照片訓練，離線跑 onnxruntime-web。
+5. 「不上傳」可被驗證：每次改版重跑第 1、2 節，用 `rea compare-application-versions` 回歸比對。

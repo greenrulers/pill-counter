@@ -1,0 +1,71 @@
+package: com.rocateer.mediscount version: 3.14.0 817
+minSdk/targetSdk: 24 36
+
+== permissions ==
+  android.permission.CAMERA
+  com.android.vending.BILLING
+  com.google.android.c2dm.permission.RECEIVE
+  android.permission.INTERNET
+  com.rocateer.mediscount.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+  android.permission.POST_NOTIFICATIONS
+  android.permission.ACCESS_WIFI_STATE
+  android.permission.ACCESS_NETWORK_STATE
+  android.permission.WAKE_LOCK
+
+== activities ==
+  com.pichillilorenzo.flutter_inappwebview_android.chrome_custom_tabs.TrustedWebActivity
+  com.pichillilorenzo.flutter_inappwebview_android.chrome_custom_tabs.TrustedWebActivitySingleInstance
+  io.flutter.plugins.urllauncher.WebViewActivity
+  com.rocateer.mediscount.MainActivity
+  com.android.billingclient.api.ProxyBillingActivity
+  com.google.android.gms.common.api.GoogleApiActivity
+  com.pichillilorenzo.flutter_inappwebview_android.in_app_browser.InAppBrowserActivity
+  com.android.billingclient.api.ProxyBillingActivityV2
+  com.pichillilorenzo.flutter_inappwebview_android.chrome_custom_tabs.ChromeCustomTabsActivitySingleInstance
+  com.pichillilorenzo.flutter_inappwebview_android.chrome_custom_tabs.ChromeCustomTabsActivity
+
+== services ==
+  com.google.firebase.messaging.FirebaseMessagingService
+  com.google.android.datatransport.runtime.backends.TransportBackendDiscovery
+  com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService
+  io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingBackgroundService
+  com.google.mlkit.common.internal.MlKitComponentDiscoveryService
+  io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService
+  androidx.camera.core.impl.MetadataHolderService
+  com.google.firebase.components.ComponentDiscoveryService
+
+== receivers ==
+  io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingReceiver
+  com.pichillilorenzo.flutter_inappwebview_android.chrome_custom_tabs.ActionBroadcastReceiver
+  com.google.firebase.iid.FirebaseInstanceIdReceiver
+  androidx.profileinstaller.ProfileInstallReceiver
+  com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver
+  dev.fluttercommunity.plus.share.SharePlusPendingIntent
+
+== providers ==
+  io.sentry.android.core.SentryPerformanceProvider
+  com.google.firebase.provider.FirebaseInitProvider
+  com.google.mlkit.common.internal.MlKitInitProvider
+  androidx.startup.InitializationProvider
+  io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingInitProvider
+  dev.fluttercommunity.plus.share.ShareFileProvider
+
+== features ==
+  android.hardware.camera
+
+== application meta-data ==
+  io.flutter.embedding.android.EnableImpeller = false
+  flutterEmbedding = 2
+  firebase_messaging_auto_init_enabled = false
+  firebase_analytics_collection_enabled = false
+  com.google.mlkit.vision.DEPENDENCIES = barcode
+  io.flutter.embedded_views_preview = true
+  com.google.android.play.billingclient.version = 8.0.0
+  com.google.android.gms.version = @7F090008
+  com.android.vending.splits.required = true
+  com.android.stamp.source = https://play.google.com/store
+  com.android.stamp.type = STAMP_TYPE_DISTRIBUTION_APK
+  com.android.vending.splits = @7F140004
+  com.android.vending.derived.apk.id = 3
+
+== libraries == ['androidx.window.sidecar', 'androidx.window.extensions']

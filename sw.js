@@ -1,5 +1,5 @@
 // sw.js — 離線快取（先用快取、背景更新）
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = 'pill-counter-' + VERSION;
 const ASSETS = ['./', './index.html', './app.js', './counter.js', './worker.js', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-512-maskable.png'];

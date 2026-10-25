@@ -53,7 +53,7 @@ PC_OPTS='{"threshold":"pct"}' node test/run.mjs 400 2   # 覆寫參數做 A/B
 
 失敗案例會輸出到 `test/out/`（畫好標記的 PNG）。目前合成測試完全正確率約 97–98%，誤差多為 ±1 且會被標成橘色。
 
-真實照片：`node test/real.mjs <含 .bmp 的資料夾>`（JPEG 先用 `sips -s format bmp 檔.jpg --out 檔.bmp` 轉檔）。用維基共享資源的公開授權照片做過初步驗證：平鋪在深色底的兩張（28 顆、10 顆）全對，緊密堆疊與低對比的會少算但會標橘色，見 [docs/真實照片驗證.md](docs/真實照片驗證.md)。藥局數藥盤上的實拍仍待組長回饋。
+真實照片：`node test/real.mjs <含 .bmp 的資料夾>`（JPEG 先用 `sips -s format bmp 檔.jpg --out 檔.bmp` 轉檔）。用維基共享資源的公開授權照片做過初步驗證：平鋪在深色底的兩張（28 顆、10 顆）全對，緊密堆疊與低對比的會少算但會標橘色，見 [docs/真實照片驗證.md](docs/真實照片驗證.md)。另外用食藥署藥品外觀資料集的真實藥錠照片（脈優、康肯、瑪爾胰、可悅您、艾必克凝）合成模擬托盤，15 張（含 60 顆一半相碰）全對，見同一份文件。藥局數藥盤上的實拍仍待組長回饋。
 
 ```bash
 node tools/make_samples.mjs      # 重新產生 samples/ 範例圖

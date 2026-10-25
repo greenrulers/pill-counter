@@ -49,7 +49,7 @@ export function countPills(img, options = {}) {
   const hi = percentile(hist, n, 0.995);
   let T, tmode = opt.threshold, o3 = null;
   if (opt.threshold === 'otsu') {
-    T = otsuThreshold(sm, Tmin).t;
+    T = otsuThreshold(sm, Tmin, hist).t;
     // 三類 Otsu 候選：藥的顏色介於托盤與另一種更亮的物體之間時（例如紅藥＋藍藥在木紋上），
     // 兩類 Otsu 會把門檻放在中間那類藥身上。候選要再通過下面的「形狀守門」才採用。
     const c3 = otsu3(hist, n, Tmin);
@@ -287,16 +287,22 @@ function featureMap(data, w, h, gbg, opt) {
   }
   const m = backgroundMap(data, w, h, gbg, opt.tiles);
   const { TX, TY, tw, th, cols } = m;
+  // 每一欄的格索引與權重只跟 x 有關，先算好
+  const ci0 = new Int32Array(w), ci1 = new Int32Array(w), cfx = new Float32Array(w);
+  for (let x = 0; x < w; x++) {
+    let u = x / tw - 0.5; let i0 = Math.floor(u); let fx = u - i0;
+    if (i0 < 0) { i0 = 0; fx = 0; } if (i0 >= TX - 1) { i0 = TX - 1; fx = 0; }
+    ci0[x] = i0 * 3; ci1[x] = Math.min(TX - 1, i0 + 1) * 3; cfx[x] = fx;
+  }
   const rowBg = new Float32Array(w * 3);
   for (let y = 0; y < h; y++) {
     let v = y / th - 0.5; let j0 = Math.floor(v); let fy = v - j0;
     if (j0 < 0) { j0 = 0; fy = 0; } if (j0 >= TY - 1) { j0 = TY - 1; fy = 0; }
     const j1 = Math.min(TY - 1, j0 + 1);
+    const r0 = j0 * TX * 3, r1 = j1 * TX * 3;
     for (let x = 0; x < w; x++) {
-      let u = x / tw - 0.5; let i0 = Math.floor(u); let fx = u - i0;
-      if (i0 < 0) { i0 = 0; fx = 0; } if (i0 >= TX - 1) { i0 = TX - 1; fx = 0; }
-      const i1 = Math.min(TX - 1, i0 + 1);
-      const a = (j0 * TX + i0) * 3, b = (j0 * TX + i1) * 3, c = (j1 * TX + i0) * 3, d = (j1 * TX + i1) * 3;
+      const fx = cfx[x];
+      const a = r0 + ci0[x], b = r0 + ci1[x], c = r1 + ci0[x], d = r1 + ci1[x];
       const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy), w01 = (1 - fx) * fy, w11 = fx * fy;
       rowBg[x * 3] = cols[a] * w00 + cols[b] * w10 + cols[c] * w01 + cols[d] * w11;
       rowBg[x * 3 + 1] = cols[a + 1] * w00 + cols[b + 1] * w10 + cols[c + 1] * w01 + cols[d + 1] * w11;
@@ -352,7 +358,8 @@ export function boxBlur(src, w, h, r) {
     for (let x = -r; x <= r; x++) s += src[row + clamp(x, 0, w - 1)];
     for (let x = 0; x < w; x++) {
       tmp[row + x] = s / k;
-      s += src[row + clamp(x + r + 1, 0, w - 1)] - src[row + clamp(x - r, 0, w - 1)];
+      const xa = x + r + 1, xb = x - r;
+      s += src[row + (xa >= w ? w - 1 : xa)] - src[row + (xb < 0 ? 0 : xb)];
     }
   }
   for (let x = 0; x < w; x++) {
@@ -360,15 +367,15 @@ export function boxBlur(src, w, h, r) {
     for (let y = -r; y <= r; y++) s += tmp[clamp(y, 0, h - 1) * w + x];
     for (let y = 0; y < h; y++) {
       out[y * w + x] = Math.round(s / k);
-      s += tmp[clamp(y + r + 1, 0, h - 1) * w + x] - tmp[clamp(y - r, 0, h - 1) * w + x];
+      const ya = y + r + 1, yb = y - r;
+      s += tmp[(ya >= h ? h - 1 : ya) * w + x] - tmp[(yb < 0 ? 0 : yb) * w + x];
     }
   }
   return out;
 }
 
 // ---------- Otsu 門檻（可限制門檻下限） ----------
-export function otsuThreshold(gray, tmin = 0) {
-  const hist = histogram(gray);
+export function otsuThreshold(gray, tmin = 0, hist = histogram(gray)) {
   const total = gray.length;
   let sum = 0;
   for (let i = 0; i < 256; i++) sum += i * hist[i];
@@ -415,96 +422,123 @@ export function thresholdMask(gray, T) {
 }
 
 // ---------- 形態學（圓形結構元素） ----------
-function discOffsets(r) {
-  const o = [];
-  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r * 0.5) o.push([dx, dy]);
-  return o;
+// 位移表以「平面索引差」預先算好；離邊界 ≥ r 的像素走不檢查邊界的快速路徑
+const _discCache = new Map();
+function discDeltas(r, w) {
+  const key = r + ':' + w;
+  let d = _discCache.get(key);
+  if (d) return d;
+  const dx = [], dy = [], flat = [];
+  for (let yy = -r; yy <= r; yy++) for (let xx = -r; xx <= r; xx++) if (xx * xx + yy * yy <= r * r + r * 0.5) { dx.push(xx); dy.push(yy); flat.push(yy * w + xx); }
+  d = { dx: Int32Array.from(dx), dy: Int32Array.from(dy), flat: Int32Array.from(flat) };
+  if (_discCache.size > 64) _discCache.clear();
+  _discCache.set(key, d);
+  return d;
 }
 export function dilate(mask, w, h, r) {
-  const out = new Uint8Array(w * h), off = discOffsets(r);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (!mask[y * w + x]) continue;
-    for (const [dx, dy] of off) {
-      const xx = x + dx, yy = y + dy;
-      if (xx >= 0 && yy >= 0 && xx < w && yy < h) out[yy * w + xx] = 1;
+  const out = new Uint8Array(w * h), { dx, dy, flat } = discDeltas(r, w), m = flat.length;
+  for (let y = 0; y < h; y++) {
+    const inY = y >= r && y < h - r, row = y * w;
+    for (let x = 0; x < w; x++) {
+      const i = row + x;
+      if (!mask[i]) continue;
+      if (inY && x >= r && x < w - r) { for (let k = 0; k < m; k++) out[i + flat[k]] = 1; }
+      else for (let k = 0; k < m; k++) {
+        const xx = x + dx[k], yy = y + dy[k];
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h) out[yy * w + xx] = 1;
+      }
     }
   }
   return out;
 }
 export function erode(mask, w, h, r) {
-  const out = new Uint8Array(w * h), off = discOffsets(r);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (!mask[y * w + x]) continue;
-    let ok = 1;
-    for (const [dx, dy] of off) {
-      const xx = x + dx, yy = y + dy;
-      if (xx < 0 || yy < 0 || xx >= w || yy >= h || !mask[yy * w + xx]) { ok = 0; break; }
+  const out = new Uint8Array(w * h), { dx, dy, flat } = discDeltas(r, w), m = flat.length;
+  for (let y = 0; y < h; y++) {
+    const inY = y >= r && y < h - r, row = y * w;
+    for (let x = 0; x < w; x++) {
+      const i = row + x;
+      if (!mask[i]) continue;
+      let ok = 1;
+      if (inY && x >= r && x < w - r) { for (let k = 0; k < m; k++) if (!mask[i + flat[k]]) { ok = 0; break; } }
+      else for (let k = 0; k < m; k++) {
+        const xx = x + dx[k], yy = y + dy[k];
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h || !mask[yy * w + xx]) { ok = 0; break; }
+      }
+      out[i] = ok;
     }
-    out[y * w + x] = ok;
   }
   return out;
 }
 export const closeMask = (m, w, h, r) => erode(dilate(m, w, h, r), w, h, r);
 export const openMask = (m, w, h, r) => dilate(erode(m, w, h, r), w, h, r);
 
-// ---------- 填洞（回傳新遮罩）：從邊界 BFS 背景，到不了的背景即為洞 ----------
+// ---------- 填洞（回傳新遮罩）：從邊界做掃描線填充標記背景，到不了的背景即為洞 ----------
 export function fillHolesCopy(mask, w, h) {
   const n = w * h, out = Uint8Array.from(mask), seen = new Uint8Array(n), q = new Int32Array(n);
-  let qh = 0, qt = 0;
-  const seed = i => { if (!mask[i] && !seen[i]) { seen[i] = 1; q[qt++] = i; } };
-  for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
-  for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
-  while (qh < qt) {
-    const i = q[qh++], x = i % w, y = (i - x) / w;
-    if (x > 0) seed(i - 1);
-    if (x < w - 1) seed(i + 1);
-    if (y > 0) seed(i - w);
-    if (y < h - 1) seed(i + w);
+  let qt = 0;
+  for (let x = 0; x < w; x++) { if (!mask[x]) q[qt++] = x; const b = (h - 1) * w + x; if (!mask[b]) q[qt++] = b; }
+  for (let y = 1; y < h - 1; y++) { const l = y * w; if (!mask[l]) q[qt++] = l; const rr = l + w - 1; if (!mask[rr]) q[qt++] = rr; }
+  while (qt > 0) {
+    const i = q[--qt];
+    if (seen[i]) continue;
+    const y = (i / w) | 0, row = y * w;
+    let x0 = i - row, x1 = x0;
+    while (x0 > 0 && !mask[row + x0 - 1] && !seen[row + x0 - 1]) x0--;
+    while (x1 < w - 1 && !mask[row + x1 + 1] && !seen[row + x1 + 1]) x1++;
+    for (let x = x0; x <= x1; x++) seen[row + x] = 1;
+    if (y > 0) { const r2 = row - w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
+    if (y < h - 1) { const r2 = row + w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
   }
   for (let i = 0; i < n; i++) if (!mask[i] && !seen[i]) out[i] = 1;
   return out;
 }
 
 // ---------- 精確歐氏距離轉換（Felzenszwalb & Huttenlocher），回傳「平方距離」；影像外視為背景 ----------
+// 加速：1D 轉換直接以步幅讀寫，不複製行列；全背景的行／列（結果必為 0）直接跳過
 export function edt(mask, w, h) {
   const W = w + 2, H = h + 2;
-  const f = new Float64Array(W * H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const inside = x > 0 && y > 0 && x < W - 1 && y < H - 1 && mask[(y - 1) * w + (x - 1)];
-    f[y * W + x] = inside ? INF : 0;
+  const f = new Float32Array(W * H);
+  // 直行：二值輸入的 1D 平方距離轉換 = 到最近背景列的距離平方，用上下兩趟線性掃描即可（外框列為背景）
+  for (let x = 0; x < w; x++) {
+    let dist = 0, any = 0;
+    for (let y = 0, p = x; y < h; y++, p += w) { if (mask[p]) { dist++; any = 1; f[(y + 1) * W + x + 1] = dist * dist; } else dist = 0; }
+    if (!any) continue;
+    dist = 0;
+    for (let y = h - 1, p = (h - 1) * w + x; y >= 0; y--, p -= w) {
+      if (mask[p]) { dist++; const k = (y + 1) * W + x + 1, dd = dist * dist; if (dd < f[k]) f[k] = dd; } else dist = 0;
+    }
   }
-  const maxN = Math.max(W, H);
-  const col = new Float64Array(maxN), dcol = new Float64Array(maxN);
-  const v = new Int32Array(maxN), z = new Float64Array(maxN + 1);
-  for (let x = 0; x < W; x++) {
-    for (let y = 0; y < H; y++) col[y] = f[y * W + x];
-    dt1d(col, H, dcol, v, z);
-    for (let y = 0; y < H; y++) f[y * W + x] = dcol[y];
-  }
-  for (let y = 0; y < H; y++) {
-    const row = y * W;
-    for (let x = 0; x < W; x++) col[x] = f[row + x];
-    dt1d(col, W, dcol, v, z);
-    for (let x = 0; x < W; x++) f[row + x] = dcol[x];
-  }
+  // 橫列：一般的拋物線下包絡；全 0 的列直接跳過
+  const d = new Float32Array(W), v = new Int32Array(W), z = new Float64Array(W + 1);
   const out = new Float32Array(w * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = f[(y + 1) * W + (x + 1)];
+  for (let y = 1; y < H - 1; y++) {
+    const row = y * W;
+    let has = 0;
+    for (let x = 1; x < W - 1; x++) if (f[row + x] !== 0) { has = 1; break; }
+    if (!has) continue;
+    dt1d(f, row, 1, W, d, v, z);
+    out.set(d.subarray(1, W - 1), (y - 1) * w);
+  }
   return out;
 }
-function dt1d(f, n, d, v, z) {
+// 1D 平方距離轉換：讀 f[off + i*stride]，結果寫到 d[0..n)
+function dt1d(f, off, stride, n, d, v, z) {
   let k = 0; v[0] = 0; z[0] = -INF; z[1] = INF;
+  const f0 = f[off];
+  let fv = f0, vk = 0;
   for (let q = 1; q < n; q++) {
-    let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    const fq = f[off + q * stride];
+    let s = ((fq + q * q) - (fv + vk * vk)) / (2 * q - 2 * vk);
     while (s <= z[k]) {
-      k--;
-      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      k--; vk = v[k]; fv = f[off + vk * stride];
+      s = ((fq + q * q) - (fv + vk * vk)) / (2 * q - 2 * vk);
     }
-    k++; v[k] = q; z[k] = s; z[k + 1] = INF;
+    k++; v[k] = q; vk = q; fv = fq; z[k] = s; z[k + 1] = INF;
   }
-  k = 0;
+  k = 0; vk = v[0]; fv = f[off + vk * stride];
   for (let q = 0; q < n; q++) {
-    while (z[k + 1] < q) k++;
-    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    while (z[k + 1] < q) { k++; vk = v[k]; fv = f[off + vk * stride]; }
+    d[q] = (q - vk) * (q - vk) + fv;
   }
 }
 
@@ -520,17 +554,29 @@ export function labelComponents(mask, w, h, dt) {
     labels[s] = id; q[qt++] = s;
     const c = { id, area: 0, sx: 0, sy: 0, x0: w, y0: h, x1: 0, y1: 0, maxDt: 0, mx: 0, my: 0 };
     while (qh < qt) {
-      const i = q[qh++], x = i % w, y = (i - x) / w;
+      const i = q[qh++], y = (i / w) | 0, x = i - y * w;
       c.area++; c.sx += x; c.sy += y;
       if (x < c.x0) c.x0 = x; if (x > c.x1) c.x1 = x;
       if (y < c.y0) c.y0 = y; if (y > c.y1) c.y1 = y;
       if (dt && dt[i] > c.maxDt) { c.maxDt = dt[i]; c.mx = x; c.my = y; }
-      for (let dy = -1; dy <= 1; dy++) {
-        const yy = y + dy; if (yy < 0 || yy >= h) continue;
-        for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx; if (xx < 0 || xx >= w) continue;
-          const j = yy * w + xx;
-          if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+        // 內部像素：固定 8 個鄰居（順序與一般路徑相同）
+        let j = i - w - 1; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j++; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j++; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j = i - 1; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j = i + 1; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j = i + w - 1; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j++; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+        j++; if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+      } else {
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= h) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx; if (xx < 0 || xx >= w) continue;
+            const j = yy * w + xx;
+            if (mask[j] && !labels[j]) { labels[j] = id; q[qt++] = j; }
+          }
         }
       }
     }

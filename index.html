@@ -13,12 +13,15 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
+<link rel="modulepreload" href="app.js">
+<link rel="modulepreload" href="counter.js">
+<link rel="modulepreload" href="db.js">
 <style>
 :root{--bg:#0b1220;--panel:#121b31;--line:#243354;--text:#e6edf7;--muted:#94a3b8;--accent:#14b8a6;--accent-2:#0f766e;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--manual:#38bdf8}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
 body{display:flex;flex-direction:column;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
-button,input,select{font:inherit;color:inherit}
+button,input,select,textarea{font:inherit;color:inherit}
 header{display:flex;align-items:center;gap:8px;padding:8px 12px 6px}
 header h1{font-size:18px;margin:0;flex:1;letter-spacing:.5px}
 .icon-btn{min-width:44px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel);padding:0 12px;font-size:15px}
@@ -37,7 +40,7 @@ header h1{font-size:18px;margin:0;flex:1;letter-spacing:.5px}
 #video,#canvas{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
 #canvas{touch-action:manipulation;cursor:crosshair}
 body[data-mode=camera]:not([data-live="1"]) #canvas{display:none}
-body[data-mode=camera][data-live="1"] #video{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+body[data-mode=camera][data-live="1"] #canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;pointer-events:none;background:transparent}
 body[data-mode=result] #video,body[data-mode=nocam] #video,body[data-mode=init] #video{display:none}
 body[data-mode=nocam] #canvas,body[data-mode=init] #canvas{display:none}
 #placeholder{display:none;position:absolute;inset:0;padding:24px;text-align:center;color:var(--muted);font-size:15px;line-height:1.7;flex-direction:column;justify-content:center;align-items:center;gap:12px}
@@ -63,16 +66,17 @@ body:not([data-mode=camera]) #liveToggle{display:none}
 body:not([data-mode=result]) .only-result{display:none}
 body[data-mode=result] .only-camera{display:none}
 body[data-mode=nocam] .only-camera-strict{display:none}
-dialog{border:0;border-radius:16px;background:var(--panel);color:var(--text);width:min(92vw,420px);max-height:85dvh;padding:0}
+dialog{border:0;border-radius:16px;background:var(--panel);color:var(--text);width:min(92vw,440px);max-height:88dvh;padding:0}
 dialog::backdrop{background:rgba(0,0,0,.6)}
-.dlg-head{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+.dlg-head{display:flex;align-items:center;gap:6px;padding:12px 14px;border-bottom:1px solid var(--line)}
 .dlg-head h2{font-size:17px;margin:0;flex:1}
-.dlg-body{padding:12px 16px 16px;overflow:auto;max-height:calc(85dvh - 60px)}
+.dlg-body{padding:12px 16px 16px;overflow:auto;max-height:calc(88dvh - 60px);-webkit-user-select:text;user-select:text}
 .field{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}
 .field:last-child{border-bottom:0}
 .field .lbl{font-size:15px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
 .field .desc{font-size:12px;color:var(--muted);line-height:1.5}
-.field select,.field input[type=range]{width:100%;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--bg);padding:0 8px;font-size:16px}
+.field select,.field input[type=range],.field input[type=text],.field textarea{width:100%;min-height:40px;border-radius:10px;border:1px solid var(--line);background:var(--bg);padding:8px;font-size:16px}
+.field textarea{min-height:64px;resize:vertical}
 .field input[type=range]{padding:0;border:0;background:transparent}
 .switch{width:52px;height:30px;appearance:none;-webkit-appearance:none;background:var(--line);border-radius:15px;position:relative;outline:0}
 .switch:checked{background:var(--accent)}
@@ -80,16 +84,25 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 .switch:checked::after{left:25px}
 .small-btns{display:flex;gap:6px;flex-wrap:wrap}
 .small-btns button{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--bg);padding:0 12px;font-size:14px}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
-td.ok{color:var(--good)}td.ng{color:var(--bad)}
+.small-btns button.danger{border-color:var(--bad);color:var(--bad)}
+.small-btns button:disabled{opacity:.4}
+.ok{color:var(--good)}.ng{color:var(--bad)}.good{color:var(--good)}.bad{color:var(--bad)}
+.rec{display:flex;gap:10px;width:100%;text-align:left;padding:8px 0;border:0;border-bottom:1px solid var(--line);background:none;align-items:center}
+.rec:active{background:rgba(255,255,255,.04)}
+.thumb{width:72px;height:54px;object-fit:cover;border-radius:8px;flex:0 0 auto;background:#000}
+.thumb.none{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;background:var(--bg)}
+.rec .meta{min-width:0;flex:1}
+.rec .l1{font-size:16px}.rec .l1 b{font-size:20px}
+.rec .l2{font-size:14px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec .l3{font-size:12px;color:var(--muted)}
+#storageInfo{font-size:12px;color:var(--muted);padding-top:10px;line-height:1.5}
+#detailCanvas{width:100%;height:auto;border-radius:10px;background:#000;display:block}
+#dMeta{font-size:13px;color:var(--muted);margin:8px 0 4px;line-height:1.6}
 #toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 16px;border-radius:12px;font-size:15px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;z-index:50}
 #toast.on{opacity:1}
 #installTip{display:none;margin:0 12px 6px;padding:10px 12px;border-radius:12px;background:#1e293b;border:1px solid var(--line);font-size:13px;line-height:1.6}
 #installTip.on{display:flex;gap:8px;align-items:flex-start}
 #installTip button{margin-left:auto;background:none;border:0;color:var(--muted);font-size:18px}
-.legend{display:flex;gap:10px;font-size:12px;color:var(--muted);justify-content:center;flex-wrap:wrap}
-.dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:4px;vertical-align:middle}
 </style>
 </head>
 <body data-mode="init">
@@ -155,6 +168,10 @@ td.ok{color:var(--good)}td.ng{color:var(--bad)}
       <div class="desc">用來檢查哪些區域被當成藥；如果陰影也被塗到，就把靈敏度往右調。</div>
     </div>
     <div class="field">
+      <div class="lbl"><span>辨識後自動存紀錄</span><input type="checkbox" class="switch" id="autoSave"></div>
+      <div class="desc">每次拍照辨識完就自動存一筆（含照片）；之後修正標記再按「存紀錄」會更新同一筆。</div>
+    </div>
+    <div class="field">
       <div class="lbl"><span>照片處理解析度</span></div>
       <select id="maxSide">
         <option value="800">800（最快）</option>
@@ -176,14 +193,35 @@ td.ok{color:var(--good)}td.ng{color:var(--bad)}
       <div class="small-btns"><button id="resetSettings">重設為預設值</button></div>
     </div>
     <div class="field">
-      <div class="desc" id="about">數藥小幫手 — 個人非營利工具。影像只在這支手機裡運算，不會上傳。辨識結果僅供輔助，發藥前請以目視複核為準。</div>
+      <div class="desc" id="about">數藥小幫手 — 個人非營利工具。影像只在這支手機裡運算與保存，不會上傳。辨識結果僅供輔助，發藥前請以目視複核為準。</div>
     </div>
   </div>
 </dialog>
 
 <dialog id="dlgHistory">
-  <div class="dlg-head"><h2>計數紀錄</h2><button class="icon-btn" id="clearHistory">清除</button><button class="icon-btn" data-close style="margin-left:6px">關閉</button></div>
-  <div class="dlg-body" id="historyBody"></div>
+  <div class="dlg-head"><h2>計數紀錄</h2><button class="icon-btn" id="exportCsv">匯出 CSV</button><button class="icon-btn" id="clearHistory">清除</button><button class="icon-btn" data-close>關閉</button></div>
+  <div class="dlg-body">
+    <div id="historyBody"></div>
+    <div id="storageInfo"></div>
+  </div>
+</dialog>
+
+<dialog id="dlgDetail">
+  <div class="dlg-head"><h2 id="dTitle">紀錄</h2><button class="icon-btn" data-close>關閉</button></div>
+  <div class="dlg-body">
+    <canvas id="detailCanvas"></canvas>
+    <div id="dMeta"></div>
+    <div class="field"><div class="lbl"><span>藥名</span></div><input type="text" id="dDrug" placeholder="藥名"></div>
+    <div class="field"><div class="lbl"><span>備註</span></div><textarea id="dMemo" placeholder="例如：病歷號尾碼、批號、複核者"></textarea></div>
+    <div class="field">
+      <div class="small-btns">
+        <button id="dSave">儲存變更</button>
+        <button id="dShare">分享／下載標記圖</button>
+        <button id="dReopen">重新開啟修正</button>
+        <button id="dDelete" class="danger">刪除</button>
+      </div>
+    </div>
+  </div>
 </dialog>
 
 <div id="toast"></div>

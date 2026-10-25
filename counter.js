@@ -518,7 +518,7 @@ function splitComponent(c, labels, dtU, dtF, w, h, R, opt) {
   return kept.map(p => ({ x: p.x, y: p.y, d: Math.sqrt(p.v) }));
 }
 
-// 兩個單中心元件：質心距離 ≤ 1.2×等效半徑，且聯集的外接方框圓滿度 ≥ 0.8 → 視為同一顆被切開的錠
+// 兩個單中心元件：質心距離 ≤ 1.2×等效半徑，且聯集的外接方框圓滿度 ≥ 0.72 → 視為同一顆被切開的錠
 function mergeHalves(results) {
   const singles = results.filter(r => r.centers.length === 1);
   for (let i = 0; i < singles.length; i++) {
@@ -533,7 +533,7 @@ function mergeHalves(results) {
       const x0 = Math.min(ca.x0, cb.x0), x1 = Math.max(ca.x1, cb.x1), y0 = Math.min(ca.y0, cb.y0), y1 = Math.max(ca.y1, cb.y1);
       const diam = Math.max(x1 - x0 + 1, y1 - y0 + 1);
       const compact = sumA / (Math.PI * (diam / 2) ** 2);
-      if (compact < 0.8) continue;
+      if (compact < 0.72) continue; // 半錠連著陰影時外框會略大，放寬一點
       a.comp = { ...ca, area: sumA, x0, x1, y0, y1, cx: (ca.cx * ca.area + cb.cx * cb.area) / sumA, cy: (ca.cy * ca.area + cb.cy * cb.area) / sumA, maxDt: Math.max(ca.maxDt, cb.maxDt) };
       a.centers = [{ x: (x0 + x1) / 2, y: (y0 + y1) / 2, d: diam / 2 }];
       a.merged = true; b.dead = true;

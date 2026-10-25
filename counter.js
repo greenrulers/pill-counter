@@ -47,9 +47,14 @@ export function countPills(img, options = {}) {
   const noise = noiseLevel(hist);
   const Tmin = Math.max(14, noise + 6);
   const hi = percentile(hist, n, 0.995);
-  let T;
+  let T, tmode = opt.threshold, o3 = null;
   if (opt.threshold === 'otsu') {
-    T = otsuThreshold(sm, Tmin).t * (1 + opt.sensitivity / 100);
+    T = otsuThreshold(sm, Tmin).t;
+    // 三類 Otsu 候選：藥的顏色介於托盤與另一種更亮的物體之間時（例如紅藥＋藍藥在木紋上），
+    // 兩類 Otsu 會把門檻放在中間那類藥身上。候選要再通過下面的「形狀守門」才採用。
+    const c3 = otsu3(hist, n, Tmin);
+    if (c3 && c3.t1 >= Tmin && c3.midFrac >= 0.03 && c3.t1 < T - 8) o3 = { ...c3, o2: T };
+    T *= (1 + opt.sensitivity / 100);
   } else {
     const level = clamp(opt.pctLevel * (1 + opt.sensitivity / 100), 0.1, 0.9);
     T = Tmin + level * Math.max(0, hi - Tmin);
@@ -67,7 +72,30 @@ export function countPills(img, options = {}) {
   mask = openMask(closeMask(mask, w, h, 1), w, h, 1);
   let dtU = edt(mask, w, h);
   let comps = labelComponents(mask, w, h, dtU);
-  let R = estimateRadius(comps, opt.rQuantile);
+  const minArea = Math.max(20, Math.round(n * 0.0003)); // 半徑估計只看夠大的元件，免得數百個雜點把 R 拉成個位數
+  let R = estimateRadius(comps, opt.rQuantile, minArea);
+
+  // ---- 3b. 三類 Otsu 的形狀守門：中間類像素單獨做開運算，薄月牙（陰影）會消失、藥會留下 ----
+  if (o3 && R >= 6) {
+    const t1 = o3.t1 * (1 + opt.sensitivity / 100);
+    const mid = new Uint8Array(n);
+    let midA = 0;
+    for (let i = 0; i < n; i++) if (sm[i] > t1 && sm[i] <= T) { mid[i] = 1; midA++; }
+    const ro3 = clamp(Math.round(R * 0.25), 2, 6);
+    const kept = openMask(mid, w, h, ro3);
+    let keptA = 0;
+    for (let i = 0; i < n; i++) keptA += kept[i];
+    const survive = midA ? keptA / midA : 0;
+    if (survive >= 0.5) {
+      T = t1; tmode = 'otsu3';
+      mask = thresholdMask(sm, T);
+      mask = openMask(closeMask(mask, w, h, 1), w, h, 1);
+      dtU = edt(mask, w, h);
+      comps = labelComponents(mask, w, h, dtU);
+      R = estimateRadius(comps, opt.rQuantile, minArea);
+    }
+    o3.survive = survive;
+  }
 
   // ---- 4. 第二輪：依 R 調整形態學半徑 ----
   if (R >= 6) {
@@ -80,7 +108,7 @@ export function countPills(img, options = {}) {
   const maskF = fillHolesCopy(mask, w, h);
   const dtF = edt(maskF, w, h);
   comps = labelComponents(maskF, w, h, dtU); // 連通用填洞版；maxDt 用未填洞版（洞內 dtU=0）
-  R = estimateRadius(comps, opt.rQuantile);
+  R = estimateRadius(comps, opt.rQuantile, minArea);
 
   // ---- 5. 拆分相連藥錠 ----
   const results = [];
@@ -98,6 +126,12 @@ export function countPills(img, options = {}) {
   // ---- 6. 單顆面積中位數 → 雜點過濾、不確定標記 ----
   const perPill = results.map(r => r.comp.area / r.centers.length).sort((a, b) => a - b);
   const A1 = perPill.length ? perPill[Math.floor(perPill.length / 2)] : 0;
+  // 尺寸分布：用每顆中心的內切圓半徑（群聚裡的每一顆都有自己的值），四分位距／中位數 > 0.35 視為「大小不一」，
+  // 放寬不確定判定（否則混裝時全部橘色）
+  const radii = results.flatMap(r => r.centers.map(ct => ct.d || 0)).filter(d => d > 0).sort((a, b) => a - b);
+  const rq1 = radii[Math.floor(radii.length * 0.25)] || 0, rq2 = radii[Math.floor(radii.length * 0.5)] || 0, rq3 = radii[Math.floor(radii.length * 0.75)] || 0;
+  const mixed = rq2 > 0 && (rq3 - rq1) / rq2 > 0.35;
+  const uncTol = mixed ? 1.2 : 0.45;
   const pills = [];
   let specks = 0;
   for (const r of results) {
@@ -106,15 +140,15 @@ export function countPills(img, options = {}) {
     if (ratio < opt.minAreaRatio) { specks++; continue; }
     const edge = c.x0 === 0 || c.y0 === 0 || c.x1 === w - 1 || c.y1 === h - 1;
     const nC = r.centers.length;
-    const uncertain = edge || Math.abs(nC - ratio) > 0.45;
+    const uncertain = edge || Math.abs(nC - ratio) > uncTol * Math.max(1, nC * 0.5);
     for (const ct of r.centers) {
       pills.push({ x: ct.x, y: ct.y, r: R, comp: c.id, uncertain, areaRatio: ratio, n: nC, edge });
     }
   }
 
   return {
-    count: pills.length, pills, R, A1, threshold: T, tmin: Tmin, hi, bg, fgFrac,
-    warnings, mask: maskF, width: w, height: h, specks, components: comps.length,
+    count: pills.length, pills, R, A1, mixed, threshold: T, tmode, tmin: Tmin, hi, bg, fgFrac,
+    warnings, mask: maskF, width: w, height: h, specks, components: comps.length, o3, comps,
   };
 }
 
@@ -151,7 +185,20 @@ function backgroundMap(data, w, h, gbg, tilesLong) {
   const tw = w / TX, th = h / TY;
   const cols = new Float32Array(TX * TY * 3), ok = new Uint8Array(TX * TY);
   const hist = new Uint32Array(32768);
-  const near2 = 100 * 100;
+  // 「像背景」的判定：RGB 距離 < 60，或色度（r,g 佔比）相近且亮度在 0.5–1.6 倍之間
+  // → 容忍托盤的明暗漸層（同色度、不同亮度），但不把顏色不同的深色藥（例如紅棕木紋上的暗紅藥）當成背景
+  const near2 = 60 * 60;
+  const gsum = Math.max(1, gbg.r + gbg.g + gbg.b), gcr = gbg.r / gsum, gcg = gbg.g / gsum;
+  const isBgLike = (r, g, b) => {
+    const dr = r - gbg.r, dg = g - gbg.g, db = b - gbg.b;
+    if (dr * dr + dg * dg + db * db < near2) return true;
+    const sum = r + g + b;
+    if (sum < 30) return false;
+    const ratio = sum / gsum;
+    if (ratio < 0.5 || ratio > 1.6) return false;
+    const dcr = r / sum - gcr, dcg = g / sum - gcg;
+    return dcr * dcr + dcg * dcg < 0.04 * 0.04;
+  };
   for (let j = 0; j < TY; j++) for (let i = 0; i < TX; i++) {
     const x0 = Math.floor(i * tw), x1 = Math.min(w, Math.floor((i + 1) * tw));
     const y0 = Math.floor(j * th), y1 = Math.min(h, Math.floor((j + 1) * th));
@@ -159,9 +206,8 @@ function backgroundMap(data, w, h, gbg, tilesLong) {
     let total = 0, near = 0;
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
       const p = (y * w + x) * 4;
-      const dr = data[p] - gbg.r, dg = data[p + 1] - gbg.g, db = data[p + 2] - gbg.b;
       total++;
-      if (dr * dr + dg * dg + db * db < near2) { near++; hist[((data[p] >> 3) << 10) | ((data[p + 1] >> 3) << 5) | (data[p + 2] >> 3)]++; }
+      if (isBgLike(data[p], data[p + 1], data[p + 2])) { near++; hist[((data[p] >> 3) << 10) | ((data[p + 1] >> 3) << 5) | (data[p + 2] >> 3)]++; }
     }
     if (near < total * 0.05) continue;
     let best = 0, bestC = 0;
@@ -175,8 +221,10 @@ function backgroundMap(data, w, h, gbg, tilesLong) {
       }
     }
     if (!cnt) continue;
+    const mr = sr / cnt, mg = sg / cnt, mb = sb / cnt;
+    if (!isBgLike(mr, mg, mb)) continue; // 格內眾數色不像背景 → 視為缺格
     const t = (j * TX + i) * 3;
-    cols[t] = sr / cnt; cols[t + 1] = sg / cnt; cols[t + 2] = sb / cnt; ok[j * TX + i] = 1;
+    cols[t] = mr; cols[t + 1] = mg; cols[t + 2] = mb; ok[j * TX + i] = 1;
   }
   // 缺格補值
   let anyOk = false;
@@ -274,13 +322,15 @@ function percentile(hist, total, q) {
   for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= target) return i; }
   return 255;
 }
-// 背景雜訊水準：特徵圖直方圖在低值區的背景峰，往右走到第一個低於峰值 3% 的 bin
+// 背景雜訊水準：特徵圖直方圖在低值區的背景峰，取右側半高寬 × 3（約 3.5σ），並設上限
+// （不能用「走到谷底」：木紋等有紋理的背景或藥很多時沒有明顯谷底，會一路走進藥的亮度區）
 function noiseLevel(hist) {
   let m0 = 0, pk = 0;
   for (let i = 0; i <= 80; i++) if (hist[i] > pk) { pk = hist[i]; m0 = i; }
   let e = m0;
-  for (let i = m0 + 1; i < 256; i++) { e = i; if (hist[i] < pk * 0.03) break; }
-  return e;
+  for (let i = m0 + 1; i < 256; i++) { e = i; if (hist[i] < pk * 0.5) break; }
+  const width = Math.max(2, e - m0);
+  return Math.min(70, m0 + 3 * width);
 }
 function borderPercentile(gray, w, h, q) {
   const bw = Math.max(2, Math.round(w * 0.06)), bh = Math.max(2, Math.round(h * 0.06));
@@ -333,6 +383,29 @@ export function otsuThreshold(gray, tmin = 0) {
     if (v > best) { best = v; t = i; }
   }
   return { t, variance: best };
+}
+
+// 三類 Otsu：在 [tmin,255] 內找兩個門檻 t1<t2 使類間變異最大；回傳 t1、t2 與中間類的像素比例
+function otsu3(hist, total, tmin) {
+  const P = new Float64Array(257), S = new Float64Array(257);
+  for (let i = 0; i < 256; i++) { P[i + 1] = P[i] + hist[i]; S[i + 1] = S[i] + i * hist[i]; }
+  const mu = S[256] / total;
+  let best = -1, bt1 = -1, bt2 = -1;
+  for (let t1 = Math.max(1, tmin); t1 < 254; t1++) {
+    const w0 = P[t1 + 1], s0 = S[t1 + 1];
+    if (w0 === 0) continue;
+    const m0 = s0 / w0;
+    for (let t2 = t1 + 1; t2 < 255; t2++) {
+      const w1 = P[t2 + 1] - P[t1 + 1], s1 = S[t2 + 1] - S[t1 + 1];
+      const w2 = total - P[t2 + 1], s2 = S[256] - S[t2 + 1];
+      if (w1 === 0 || w2 === 0) continue;
+      const m1 = s1 / w1, m2 = s2 / w2;
+      const v = w0 * (m0 - mu) ** 2 + w1 * (m1 - mu) ** 2 + w2 * (m2 - mu) ** 2;
+      if (v > best) { best = v; bt1 = t1; bt2 = t2; }
+    }
+  }
+  if (bt1 < 0) return null;
+  return { t1: bt1, t2: bt2, midFrac: (P[bt2 + 1] - P[bt1 + 1]) / total };
 }
 
 export function thresholdMask(gray, T) {
@@ -471,8 +544,9 @@ export function labelComponents(mask, w, h, dt) {
 
 // ---------- 藥錠半徑估計：各元件最大 EDT（內切圓半徑）的高分位數 ----------
 // 內切圓半徑不會因相連而變大，但碎片、半錠、被刻痕切開的錠會把它拉低，所以取高分位數
-function estimateRadius(comps, q = 0.8) {
-  const rs = comps.filter(c => c.area >= 20).map(c => Math.sqrt(c.maxDt)).sort((a, b) => a - b);
+function estimateRadius(comps, q = 0.8, minArea = 20) {
+  let rs = comps.filter(c => c.area >= minArea).map(c => Math.sqrt(c.maxDt)).sort((a, b) => a - b);
+  if (rs.length < 3) rs = comps.filter(c => c.area >= 20).map(c => Math.sqrt(c.maxDt)).sort((a, b) => a - b);
   if (!rs.length) return 0;
   return rs[Math.min(rs.length - 1, Math.floor(rs.length * q))];
 }
@@ -500,20 +574,38 @@ function splitComponent(c, labels, dtU, dtF, w, h, R, opt) {
       if (isMax) cand.push({ x, y, v, vf: dtF[i] });
     }
   }
+  c.dbgCand = cand.length;
   if (cand.length === 0) return [];
   cand.sort((a, b) => b.v - a.v);
   const nms2 = (opt.nms * R) ** 2;
-  const kept = [];
-  outer: for (const p of cand) {
-    for (const k of kept) {
-      const dx = p.x - k.x, dy = p.y - k.y;
-      if (dx * dx + dy * dy < nms2) continue outer;              // 太近 → 同一顆
-      if (!hasNeck(p, k, dtF, w, opt.neck)) continue outer;     // 中間沒有變窄 → 同一顆（長錠／膠囊／有壓印的錠）
+  const greedy = (dtNeck) => {
+    const kept = [];
+    let nmsDrop = 0, neckDrop = 0;
+    outer: for (const p of cand) {
+      for (const k of kept) {
+        const dx = p.x - k.x, dy = p.y - k.y;
+        if (dx * dx + dy * dy < nms2) { nmsDrop++; continue outer; }               // 太近 → 同一顆
+        if (!hasNeck(p, k, dtNeck, w, opt.neck)) { neckDrop++; continue outer; }   // 中間沒有變窄 → 同一顆（長錠／膠囊／有壓印的錠）
+      }
+      kept.push(p);
     }
-    kept.push(p);
+    return { kept, nmsDrop, neckDrop };
+  };
+  // 第一次用填洞版距離圖做頸部測試（有壓印的錠不會被誤拆）
+  let g = greedy(dtF);
+  c.dbgNms = g.nmsDrop; c.dbgNeck = g.neckDrop;
+  // 元件自己的內切圓半徑（藥大小不一時，小藥群才不會被大藥的全域 R 影響）
+  const rc = Math.max(3, Math.sqrt(c.maxDt));
+  // 若找到的顆數明顯少於面積推算（密集排列時藥之間的小空隙被填洞填掉、看不到脖子），改用未填洞版重做，取較多者
+  const expected = Math.floor(c.area / (1.3 * Math.PI * rc * rc));
+  if (g.kept.length < expected) {
+    const g2 = greedy(dtU);
+    if (g2.kept.length > g.kept.length) { g = g2; c.dbgRedo = true; }
   }
-  // 面積上限：一個元件最多能裝幾顆「內切圓半徑 R」的藥（避免刻痕錠被拆成兩顆）
-  const nMax = Math.max(1, Math.floor(c.area / (0.6 * Math.PI * R * R)));
+  const kept = g.kept;
+  // 面積上限：一個元件最多能裝幾顆內切圓半徑 rc 的藥
+  const nMax = Math.max(1, Math.floor(c.area / (0.6 * Math.PI * rc * rc)));
+  c.dbgNMax = nMax; c.dbgKept = kept.length;
   if (kept.length > nMax) kept.length = nMax;
   return kept.map(p => ({ x: p.x, y: p.y, d: Math.sqrt(p.v) }));
 }

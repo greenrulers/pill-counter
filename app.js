@@ -1,7 +1,7 @@
 // app.js — 數藥小幫手 前端邏輯（相機、拍照、辨識、人工修正、紀錄、設定）
 import { countPills } from './counter.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const $ = (s) => document.querySelector(s);
 const SETTINGS_KEY = 'pc_settings_v1', HISTORY_KEY = 'pc_history_v1', TARGET_KEY = 'pc_target_v1', TIP_KEY = 'pc_tip_v1';
 const defaultSettings = { sensitivity: 0, polarity: 'auto', split: true, showMask: false, live: false, maxSide: 1000 };

@@ -8,7 +8,7 @@ const N = Number(process.argv[2] || 200);
 const seed = Number(process.argv[3] || 1);
 const outDir = path.join(path.dirname(new URL(import.meta.url).pathname), 'out');
 fs.mkdirSync(outDir, { recursive: true });
-for (const f of fs.readdirSync(outDir)) if (f.endsWith('.png')) fs.unlinkSync(path.join(outDir, f));
+for (const f of fs.readdirSync(outDir)) if (f.startsWith('fail_') && f.endsWith('.png')) fs.unlinkSync(path.join(outDir, f));
 
 const OPTS = process.env.PC_OPTS ? JSON.parse(process.env.PC_OPTS) : {};
 const rng = mulberry32(seed);

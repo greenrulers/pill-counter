@@ -64,7 +64,7 @@ node tools/make_icons.mjs        # 重新產生 icons/
 python3 -m http.server 8765 --bind 127.0.0.1
 ```
 
-打開 `http://127.0.0.1:8765/?img=samples/sample1.png` 可不經相機直接測試一張圖。
+打開 `http://127.0.0.1:8765/?img=samples/sample1.jpg` 可不經相機直接測試一張圖。
 
 ## 部署
 

@@ -1,4 +1,4 @@
-// tools/make_samples.mjs — 產生三張合成範例照片到 samples/
+// tools/make_samples.mjs — 產生三張合成範例照片到 samples/（PNG；之後用 sips 轉 JPEG：sips -s format jpeg -s formatOptions 78 x.png --out x.jpg）
 import fs from 'node:fs';
 import { makeScene, mulberry32, encodePNG } from '../test/synth.mjs';
 fs.mkdirSync('samples', { recursive: true });

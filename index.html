@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>數藥小幫手</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="description" content="用手機相機數藥錠數量並核對處方數量，避免給錯。所有運算都在手機內完成，不上傳任何影像。">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="數藥">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+:root{--bg:#0b1220;--panel:#121b31;--line:#243354;--text:#e6edf7;--muted:#94a3b8;--accent:#14b8a6;--accent-2:#0f766e;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--manual:#38bdf8}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+body{display:flex;flex-direction:column;height:100dvh;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
+button,input,select{font:inherit;color:inherit}
+header{display:flex;align-items:center;gap:8px;padding:8px 12px 6px}
+header h1{font-size:18px;margin:0;flex:1;letter-spacing:.5px}
+.icon-btn{min-width:44px;min-height:40px;border-radius:12px;border:1px solid var(--line);background:var(--panel);padding:0 12px;font-size:15px}
+.target{padding:0 12px 8px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.target .row{display:flex;align-items:center;gap:6px}
+.target label{font-size:13px;color:var(--muted);white-space:nowrap}
+.target input[type=number]{width:96px;height:48px;text-align:center;font-size:26px;font-weight:700;border-radius:12px;border:1px solid var(--line);background:var(--panel);-moz-appearance:textfield}
+.target input::-webkit-outer-spin-button,.target input::-webkit-inner-spin-button{-webkit-appearance:none}
+.target .step{width:44px;height:48px;border-radius:12px;border:1px solid var(--line);background:var(--panel);font-size:24px}
+.target input[type=text]{height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel);padding:0 10px;font-size:16px;width:100%}
+.chips{grid-column:1/-1;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;min-width:44px;height:34px;border-radius:17px;border:1px solid var(--line);background:var(--panel);font-size:15px;padding:0 12px}
+.chip.on{background:var(--accent-2);border-color:var(--accent)}
+#stage{flex:1;position:relative;background:#000;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#video,#canvas{max-width:100%;max-height:100%;width:auto;height:auto;display:block}
+#canvas{touch-action:manipulation;cursor:crosshair}
+body[data-mode=camera]:not([data-live="1"]) #canvas{display:none}
+body[data-mode=camera][data-live="1"] #video{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+body[data-mode=result] #video,body[data-mode=nocam] #video,body[data-mode=init] #video{display:none}
+body[data-mode=nocam] #canvas,body[data-mode=init] #canvas{display:none}
+#placeholder{display:none;position:absolute;inset:0;padding:24px;text-align:center;color:var(--muted);font-size:15px;line-height:1.7;flex-direction:column;justify-content:center;align-items:center;gap:12px}
+body[data-mode=nocam] #placeholder,body[data-mode=init] #placeholder{display:flex}
+#badge{position:absolute;left:10px;top:10px;background:rgba(11,18,32,.82);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:14px;padding:8px 12px;max-width:min(78%,360px)}
+#badge .n{font-size:44px;font-weight:800;line-height:1}
+#badge .v{font-size:15px;margin-top:4px;font-weight:600}
+#badge .note{font-size:13px;color:var(--warn);margin-top:4px}
+#badge.good{border-color:var(--good)}#badge.good .v{color:var(--good)}
+#badge.bad{border-color:var(--bad)}#badge.bad .v{color:var(--bad)}
+#badge.live .n{font-size:30px}
+#busy{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35);font-size:18px;font-weight:600}
+#busy.on{display:flex}
+#liveToggle{position:absolute;right:10px;top:10px;height:36px;border-radius:18px;border:1px solid var(--line);background:rgba(11,18,32,.82);padding:0 12px;font-size:14px}
+#liveToggle.on{background:var(--accent-2);border-color:var(--accent)}
+body:not([data-mode=camera]) #liveToggle{display:none}
+#hint{padding:6px 12px;font-size:13px;color:var(--muted);min-height:26px;text-align:center}
+.actions{display:flex;gap:8px;padding:6px 12px calc(10px + env(safe-area-inset-bottom))}
+.btn{flex:1;min-height:54px;border-radius:14px;border:1px solid var(--line);background:var(--panel);font-size:16px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn.primary{flex:2;background:var(--accent-2);border-color:var(--accent);font-size:18px}
+.btn.primary:active{background:var(--accent)}
+.btn:disabled{opacity:.45}
+body:not([data-mode=result]) .only-result{display:none}
+body[data-mode=result] .only-camera{display:none}
+body[data-mode=nocam] .only-camera-strict{display:none}
+dialog{border:0;border-radius:16px;background:var(--panel);color:var(--text);width:min(92vw,420px);max-height:85dvh;padding:0}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.dlg-head{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+.dlg-head h2{font-size:17px;margin:0;flex:1}
+.dlg-body{padding:12px 16px 16px;overflow:auto;max-height:calc(85dvh - 60px)}
+.field{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}
+.field:last-child{border-bottom:0}
+.field .lbl{font-size:15px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.field .desc{font-size:12px;color:var(--muted);line-height:1.5}
+.field select,.field input[type=range]{width:100%;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--bg);padding:0 8px;font-size:16px}
+.field input[type=range]{padding:0;border:0;background:transparent}
+.switch{width:52px;height:30px;appearance:none;-webkit-appearance:none;background:var(--line);border-radius:15px;position:relative;outline:0}
+.switch:checked{background:var(--accent)}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:#fff;transition:left .15s}
+.switch:checked::after{left:25px}
+.small-btns{display:flex;gap:6px;flex-wrap:wrap}
+.small-btns button{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--bg);padding:0 12px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+td.ok{color:var(--good)}td.ng{color:var(--bad)}
+#toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 16px;border-radius:12px;font-size:15px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center;z-index:50}
+#toast.on{opacity:1}
+#installTip{display:none;margin:0 12px 6px;padding:10px 12px;border-radius:12px;background:#1e293b;border:1px solid var(--line);font-size:13px;line-height:1.6}
+#installTip.on{display:flex;gap:8px;align-items:flex-start}
+#installTip button{margin-left:auto;background:none;border:0;color:var(--muted);font-size:18px}
+.legend{display:flex;gap:10px;font-size:12px;color:var(--muted);justify-content:center;flex-wrap:wrap}
+.dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:4px;vertical-align:middle}
+</style>
+</head>
+<body data-mode="init">
+<header>
+  <h1>數藥小幫手</h1>
+  <button class="icon-btn" id="btnHistory">紀錄</button>
+  <button class="icon-btn" id="btnSettings" aria-label="設定">⚙︎ 設定</button>
+</header>
+<div id="installTip"><span>想當 app 用：在 Safari 點下方「分享」鈕 → 「加入主畫面」，之後從主畫面開啟就是全螢幕、可離線。</span><button id="installClose" aria-label="關閉">×</button></div>
+<section class="target">
+  <div class="row">
+    <label for="target">預定數量</label>
+    <button class="step" id="tMinus" aria-label="減一">−</button>
+    <input id="target" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="9999" placeholder="—">
+    <button class="step" id="tPlus" aria-label="加一">＋</button>
+  </div>
+  <input id="drug" type="text" placeholder="藥名（選填，存紀錄用）" autocomplete="off">
+  <div class="chips" id="chips"></div>
+</section>
+<main id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="canvas"></canvas>
+  <div id="placeholder">
+    <div id="placeholderText">正在開啟相機…</div>
+    <label class="btn" for="file" style="flex:0;padding:0 20px">從相簿選照片</label>
+  </div>
+  <div id="badge" hidden></div>
+  <button id="liveToggle">即時計數：關</button>
+  <div id="busy">辨識中…</div>
+</main>
+<div id="hint"></div>
+<footer class="actions">
+  <label class="btn only-camera" for="file">相簿</label>
+  <input id="file" type="file" accept="image/*" hidden>
+  <button class="btn primary only-camera only-camera-strict" id="btnShoot">拍照計數</button>
+  <button class="btn only-result" id="btnUndo">復原</button>
+  <button class="btn only-result" id="btnSave">存紀錄</button>
+  <button class="btn primary only-result" id="btnRetake">重拍</button>
+</footer>
+
+<dialog id="dlgSettings">
+  <div class="dlg-head"><h2>設定</h2><button class="icon-btn" data-close>完成</button></div>
+  <div class="dlg-body">
+    <div class="field">
+      <div class="lbl"><span>靈敏度</span><span id="sensVal">0</span></div>
+      <input type="range" id="sensitivity" min="-40" max="40" step="5">
+      <div class="desc">往左（負值）＝抓得更多，適合藥跟托盤顏色差異小；往右（正值）＝抓得更少，適合有陰影、反光或雜點時。</div>
+    </div>
+    <div class="field">
+      <div class="lbl"><span>藥錠與托盤的分辨方式</span></div>
+      <select id="polarity">
+        <option value="auto">自動（依顏色差異，建議）</option>
+        <option value="light">藥比托盤亮（白藥＋深色托盤）</option>
+        <option value="dark">藥比托盤暗（深色藥＋白紙）</option>
+      </select>
+    </div>
+    <div class="field">
+      <div class="lbl"><span>自動拆分相連藥錠</span><input type="checkbox" class="switch" id="split"></div>
+      <div class="desc">關掉後，黏在一起的藥會算成一顆。</div>
+    </div>
+    <div class="field">
+      <div class="lbl"><span>顯示辨識範圍（粉紅色）</span><input type="checkbox" class="switch" id="showMask"></div>
+      <div class="desc">用來檢查哪些區域被當成藥；如果陰影也被塗到，就把靈敏度往右調。</div>
+    </div>
+    <div class="field">
+      <div class="lbl"><span>照片處理解析度</span></div>
+      <select id="maxSide">
+        <option value="800">800（最快）</option>
+        <option value="1000">1000（建議）</option>
+        <option value="1400">1400（藥很小、很多時）</option>
+      </select>
+    </div>
+    <div class="field">
+      <div class="lbl"><span>試用範例照片</span></div>
+      <div class="small-btns">
+        <button data-sample="samples/sample1.png">藍盤白錠 28 顆</button>
+        <button data-sample="samples/sample2.png">黑盤膠囊 30 顆</button>
+        <button data-sample="samples/sample3.png">白紙深色刻痕錠 14 顆</button>
+      </div>
+    </div>
+    <div class="field">
+      <div class="small-btns"><button id="resetSettings">重設為預設值</button></div>
+    </div>
+    <div class="field">
+      <div class="desc" id="about">數藥小幫手 — 個人非營利工具。影像只在這支手機裡運算，不會上傳。辨識結果僅供輔助，發藥前請以目視複核為準。</div>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="dlgHistory">
+  <div class="dlg-head"><h2>計數紀錄</h2><button class="icon-btn" id="clearHistory">清除</button><button class="icon-btn" data-close style="margin-left:6px">關閉</button></div>
+  <div class="dlg-body" id="historyBody"></div>
+</dialog>
+
+<div id="toast"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

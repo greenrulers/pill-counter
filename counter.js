@@ -26,8 +26,12 @@ export const DEFAULTS = {
   threshold: 'otsu',  // 'otsu'（限制在雜訊水準以上的 Otsu，預設）| 'pct'（雜訊水準→最亮物體的比例）
   pctLevel: 0.4,      // threshold='pct' 時的比例
   localBg: true,      // 分區背景修正
+  otsu3: true,        // 是否嘗試三類 Otsu（藥的顏色介於托盤與更亮物體之間時用；測試用開關）
+  circles: true,      // 分割結果不可靠時，是否改用圓形偵測（中心點法）備援
   tiles: 8,           // 分區數（長邊）
 };
+
+import { detectCircles } from './blobs.js';
 
 const INF = 1e12;
 
@@ -53,7 +57,7 @@ export function countPills(img, options = {}) {
     // 三類 Otsu 候選：藥的顏色介於托盤與另一種更亮的物體之間時（例如紅藥＋藍藥在木紋上），
     // 兩類 Otsu 會把門檻放在中間那類藥身上。候選要再通過下面的「形狀守門」才採用。
     const c3 = otsu3(hist, n, Tmin);
-    if (c3 && c3.t1 >= Tmin && c3.midFrac >= 0.03 && c3.t1 < T - 8) o3 = { ...c3, o2: T };
+    if (opt.otsu3 && c3 && c3.t1 >= Tmin && c3.midFrac >= 0.03 && c3.t1 < T - 8) o3 = { ...c3, o2: T };
     T *= (1 + opt.sensitivity / 100);
   } else {
     const level = clamp(opt.pctLevel * (1 + opt.sensitivity / 100), 0.1, 0.9);
@@ -160,9 +164,28 @@ export function countPills(img, options = {}) {
   const uncN = pills.reduce((a, p) => a + (p.uncertain ? 1 : 0), 0);
   if (pills.length >= 6 && uncN * 2 > pills.length) warnings.push('mostly_uncertain');
 
+  // ---- 7. 備援：分割結果不可靠時改用圓形偵測（中心點法） ----
+  // 不可靠的訊號：橘色 ≥ 30%、背景雜亂、被略過的線條很多、或元件大到像整個袋子／托盤（R ≥ 短邊 20%）
+  let circles = null;
+  const uncFrac = pills.length ? uncN / pills.length : 0;
+  // 另外：對比太低、估出的藥錠半徑小到不合理（< 6 px，白藥配白袋時分割只抓到幾個亮點）、或只找到 ≤ 2 顆，也交給圓形偵測確認
+  const distressed = warnings.includes('clutter') || warnings.includes('mostly_uncertain') || warnings.includes('low_contrast') ||
+    uncFrac >= 0.3 || R >= 0.2 * Math.min(w, h) || R < 6 || pills.length <= 2;
+  if (opt.circles && distressed) {
+    circles = detectCircles(img, {});
+    // 採用條件：至少 3 個圓、八成以上是整圈都有邊緣的「強圓」、半徑不在偵測下限附近（小而密的錠圓形偵測會多抓）
+    if (circles.pills.length >= 3 && circles.quality >= 0.8 && circles.R >= 12) {
+      pills.length = 0;
+      for (const c of circles.pills) pills.push({ x: c.x, y: c.y, r: circles.R, comp: 0, uncertain: c.uncertain, areaRatio: 1, n: 1, edge: false, circle: true, support: c.support });
+      R = circles.R; tmode = 'circles';
+      warnings.push('circle_mode');
+    }
+  }
+
   return {
     count: pills.length, pills, R, A1, mixed, threshold: T, tmode, tmin: Tmin, hi, bg, fgFrac,
     warnings, mask: maskF, width: w, height: h, specks, lines, components: comps.length, o3, comps,
+    circles: circles ? { count: circles.pills.length, R: circles.R, quality: circles.quality, candidates: circles.candidates } : null,
   };
 }
 
@@ -280,7 +303,7 @@ function backgroundMap(data, w, h, gbg, tilesLong) {
 }
 
 // ---------- 特徵圖 D：與（局部）背景的顏色距離，或亮度差 ----------
-function featureMap(data, w, h, gbg, opt) {
+export function featureMap(data, w, h, gbg, opt) {
   const n = w * h, feat = new Uint8Array(n);
   if (opt.polarity !== 'auto') {
     const sign = opt.polarity === 'light' ? 1 : -1;

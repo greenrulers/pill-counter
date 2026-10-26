@@ -4,6 +4,7 @@ import path from 'node:path';
 import { countPills } from '../counter.js';
 import { encodePNG, drawMarkers } from './synth.mjs';
 import { readBMP } from './bmp.mjs';
+import { readPNG } from './png.mjs';
 
 const dir = process.argv[2];
 const OPTS = process.env.PC_OPTS ? JSON.parse(process.env.PC_OPTS) : {};
@@ -26,12 +27,12 @@ function downscale(img, maxSide) {
   return { data: out, width: w, height: h };
 }
 
-for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.bmp')).sort()) {
-  const img = downscale(readBMP(path.join(dir, f)), 1000);
+for (const f of fs.readdirSync(dir).filter(f => /\.(bmp|png)$/i.test(f)).sort()) {
+  const img = downscale(/\.png$/i.test(f) ? readPNG(path.join(dir, f)) : readBMP(path.join(dir, f)), 1000);
   const t0 = Date.now();
   const res = countPills(img, OPTS);
   const ms = Date.now() - t0;
   const unc = res.pills.filter(p => p.uncertain).length;
   console.log(`${f.padEnd(60)} count=${String(res.count).padStart(3)} unc=${unc} R=${res.R.toFixed(1)} T=${res.threshold.toFixed(0)}/${res.tmode} tmin=${res.tmin} hi=${res.hi} fg=${(res.fgFrac * 100).toFixed(1)}% bg=(${res.bg.r | 0},${res.bg.g | 0},${res.bg.b | 0}) warn=${res.warnings.join(',')} ${ms}ms`);
-  fs.writeFileSync(path.join(outDir, f.replace('.bmp', '.png')), encodePNG(drawMarkers(img, res.pills, res.R).data, img.width, img.height));
+  fs.writeFileSync(path.join(outDir, f.replace(/\.bmp$/i, '.png')), encodePNG(drawMarkers(img, res.pills, res.R).data, img.width, img.height));
 }

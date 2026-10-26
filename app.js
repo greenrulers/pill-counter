@@ -2,7 +2,7 @@
 import { countPills } from './counter.js';
 import * as DB from './db.js';
 
-const VERSION = '1.2.1';
+const VERSION = '1.2.2';
 const $ = (s) => document.querySelector(s);
 const SETTINGS_KEY = 'pc_settings_v1', TARGET_KEY = 'pc_target_v1', TIP_KEY = 'pc_tip_v1';
 const defaultSettings = { sensitivity: 0, polarity: 'auto', split: true, showMask: false, live: false, maxSide: 1000, autoSave: false };
@@ -151,6 +151,7 @@ async function analyze(img) {
     if (res.warnings.includes('low_contrast')) toast('藥和托盤的顏色太接近，建議換深色托盤或白紙');
     else if (res.warnings.includes('no_foreground')) toast('畫面裡好像沒有藥');
     else if (res.warnings.includes('clutter')) toast('背景有袋子邊緣／反光等雜訊（已略過一部分）：建議把藥倒在單色托盤上，或靠近拍讓藥佔滿畫面');
+    else if (res.warnings.includes('circle_mode')) toast('背景雜亂，已改用圓形偵測（只認圓錠）；膠囊、長錠請倒在單色托盤上拍');
     else if (res.warnings.includes('mostly_uncertain')) toast('超過一半標記不確定：請靠近拍讓藥佔滿畫面，或換單色托盤');
     if (settings.autoSave && res.count > 0) saveRecord(true);
   } catch (e) {

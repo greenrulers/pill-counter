@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { countPills } from '../counter.js';
 import { encodePNG, drawMarkers } from './synth.mjs';
+import { readPNG } from './png.mjs';
 
 export function makeBagScene(seed = 1) {
   let s = seed >>> 0; const rnd = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
@@ -32,6 +33,18 @@ if (process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url
     if (!ok) bad++;
     console.log(`${ok ? 'OK ' : 'FAIL'} seed${seed} truth=${sc.truth} count=${r.count} unc=${r.pills.filter((p) => p.uncertain).length} R=${r.R.toFixed(1)} lines=${r.lines} warn=${r.warnings.join(',')}`);
     if (seed === 1) { const o = path.join(path.dirname(new URL(import.meta.url).pathname), 'out'); fs.mkdirSync(o, { recursive: true }); fs.writeFileSync(path.join(o, 'bag_seed1.png'), encodePNG(drawMarkers(sc.img, r.pills, r.R).data, sc.img.width, sc.img.height)); }
+  }
+  // 真實照片：10 顆白色圓錠裝在透明夾鏈袋、放灰桌上（2026-10-26 組長實拍，v1.2.1 分割法數成 10 但位置錯 3+3）
+  const here = path.dirname(new URL(import.meta.url).pathname);
+  for (const [file, truth] of [['real/bag10_white_tablets_in_zipbag.png', 10]]) {
+    const img = readPNG(path.join(here, file));
+    const t0 = performance.now();
+    const r = countPills(img, {});
+    const ms = performance.now() - t0;
+    const ok = r.count === truth;
+    if (!ok) bad++;
+    console.log(`${ok ? 'OK ' : 'FAIL'} ${file} truth=${truth} count=${r.count} unc=${r.pills.filter((p) => p.uncertain).length} R=${r.R.toFixed(1)} mode=${r.tmode} warn=${r.warnings.join(',')} ${ms.toFixed(0)}ms`);
+    fs.writeFileSync(path.join(here, 'out', path.basename(file)), encodePNG(drawMarkers(img, r.pills, r.R).data, img.width, img.height));
   }
   process.exit(bad ? 1 : 0);
 }

@@ -105,7 +105,8 @@ export function countPills(img, options = {}) {
     mask = openMask(closeMask(mask, w, h, rc), w, h, ro);
     dtU = edt(mask, w, h);
   }
-  const maskF = fillHolesCopy(mask, w, h);
+  // 只填比「一顆藥」小的洞（刻痕、相連藥之間的縫）；袋子外框／格線圍出的大洞不填
+  const maskF = fillHolesCopy(mask, w, h, R >= 4 ? Math.PI * R * R : Infinity);
   const dtF = edt(maskF, w, h);
   comps = labelComponents(maskF, w, h, dtU); // 連通用填洞版；maxDt 用未填洞版（洞內 dtU=0）
   R = estimateRadius(comps, opt.rQuantile, minArea);
@@ -133,22 +134,35 @@ export function countPills(img, options = {}) {
   const mixed = rq2 > 0 && (rq3 - rq1) / rq2 > 0.35;
   const uncTol = mixed ? 1.2 : 0.45;
   const pills = [];
-  let specks = 0;
+  let specks = 0, lines = 0;
   for (const r of results) {
     const c = r.comp;
     const ratio = A1 > 0 ? c.area / A1 : 1;
     if (ratio < opt.minAreaRatio) { specks++; continue; }
     const edge = c.x0 === 0 || c.y0 === 0 || c.x1 === w - 1 || c.y1 === h - 1;
     const nC = r.centers.length;
+    // 細長條過濾：夾鏈袋邊緣、封口線、皺褶反光、托盤格線 —— 內切圓很小（比藥細很多）、外框很長、
+    // 面積遠大於「顆數 × 內切圓面積」。一排相連的圓錠內切圓 ≈ R，不會被誤刪；膠囊外框比 ≈ 3、fill ≈ 2，也不會
+    const dC = Math.sqrt(c.maxDt);
+    const bw = c.x1 - c.x0 + 1, bh = c.y1 - c.y0 + 1;
+    const elong = Math.max(bw, bh) / Math.max(1, Math.min(bw, bh));
+    const fill = c.area / Math.max(1, nC * Math.PI * dC * dC);
+    // 外框很長的細線（袋邊、封口線、皺褶）；或任何形狀的「網／環」（整圈袋子外框、托盤格線）：內切圓遠小於藥、面積卻是它的幾十倍
+    if (R > 0 && ((dC < 0.6 * R && elong > 3 && fill > 4) || fill > 12)) { lines++; continue; }
     const uncertain = edge || Math.abs(nC - ratio) > uncTol * Math.max(1, nC * 0.5);
     for (const ct of r.centers) {
       pills.push({ x: ct.x, y: ct.y, r: R, comp: c.id, uncertain, areaRatio: ratio, n: nC, edge });
     }
   }
 
+  // 背景雜亂（袋子、反光、格線）：被當成細長條略過的元件很多 → 提醒使用者換單色托盤或靠近拍
+  if (lines >= 3 && lines * 3 >= pills.length) warnings.push('clutter');
+  const uncN = pills.reduce((a, p) => a + (p.uncertain ? 1 : 0), 0);
+  if (pills.length >= 6 && uncN * 2 > pills.length) warnings.push('mostly_uncertain');
+
   return {
     count: pills.length, pills, R, A1, mixed, threshold: T, tmode, tmin: Tmin, hi, bg, fgFrac,
-    warnings, mask: maskF, width: w, height: h, specks, components: comps.length, o3, comps,
+    warnings, mask: maskF, width: w, height: h, specks, lines, components: comps.length, o3, comps,
   };
 }
 
@@ -473,23 +487,43 @@ export const closeMask = (m, w, h, r) => erode(dilate(m, w, h, r), w, h, r);
 export const openMask = (m, w, h, r) => dilate(erode(m, w, h, r), w, h, r);
 
 // ---------- 填洞（回傳新遮罩）：從邊界做掃描線填充標記背景，到不了的背景即為洞 ----------
-export function fillHolesCopy(mask, w, h) {
+// maxArea：只填面積 ≤ maxArea 的洞（藥上的刻痕、相連藥之間的小縫）。夾鏈袋外框、托盤格線等「封閉的亮線圈」
+// 圍出來的大洞不填，否則整個袋子內部會變成一個巨大元件，裡面的反光、皺褶全被當成藥。
+export function fillHolesCopy(mask, w, h, maxArea = Infinity) {
   const n = w * h, out = Uint8Array.from(mask), seen = new Uint8Array(n), q = new Int32Array(n);
-  let qt = 0;
-  for (let x = 0; x < w; x++) { if (!mask[x]) q[qt++] = x; const b = (h - 1) * w + x; if (!mask[b]) q[qt++] = b; }
-  for (let y = 1; y < h - 1; y++) { const l = y * w; if (!mask[l]) q[qt++] = l; const rr = l + w - 1; if (!mask[rr]) q[qt++] = rr; }
-  while (qt > 0) {
-    const i = q[--qt];
-    if (seen[i]) continue;
-    const y = (i / w) | 0, row = y * w;
-    let x0 = i - row, x1 = x0;
-    while (x0 > 0 && !mask[row + x0 - 1] && !seen[row + x0 - 1]) x0--;
-    while (x1 < w - 1 && !mask[row + x1 + 1] && !seen[row + x1 + 1]) x1++;
-    for (let x = x0; x <= x1; x++) seen[row + x] = 1;
-    if (y > 0) { const r2 = row - w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
-    if (y < h - 1) { const r2 = row + w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
+  // 掃描線填充：從 seeds 出發，把連通的背景像素標成 tag，回傳填到的像素數；fillBuf 為非 null 時把像素索引記進去
+  const flood = (seeds, ns, tag, fillBuf) => {
+    let qt = 0, cnt = 0;
+    for (let k = 0; k < ns; k++) q[qt++] = seeds[k];
+    while (qt > 0) {
+      const i = q[--qt];
+      if (seen[i]) continue;
+      const y = (i / w) | 0, row = y * w;
+      let x0 = i - row, x1 = x0;
+      while (x0 > 0 && !mask[row + x0 - 1] && !seen[row + x0 - 1]) x0--;
+      while (x1 < w - 1 && !mask[row + x1 + 1] && !seen[row + x1 + 1]) x1++;
+      for (let x = x0; x <= x1; x++) { seen[row + x] = tag; if (fillBuf) fillBuf[cnt] = row + x; cnt++; }
+      if (y > 0) { const r2 = row - w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
+      if (y < h - 1) { const r2 = row + w; let inRun = 0; for (let x = x0; x <= x1; x++) { const j = r2 + x; if (!mask[j] && !seen[j]) { if (!inRun) { q[qt++] = j; inRun = 1; } } else inRun = 0; } }
+    }
+    return cnt;
+  };
+  const border = new Int32Array(2 * (w + h));
+  let nb = 0;
+  for (let x = 0; x < w; x++) { if (!mask[x]) border[nb++] = x; const b = (h - 1) * w + x; if (!mask[b]) border[nb++] = b; }
+  for (let y = 1; y < h - 1; y++) { const l = y * w; if (!mask[l]) border[nb++] = l; const rr = l + w - 1; if (!mask[rr]) border[nb++] = rr; }
+  flood(border, nb, 1, null);
+  if (maxArea === Infinity) {
+    for (let i = 0; i < n; i++) if (!mask[i] && !seen[i]) out[i] = 1;
+    return out;
   }
-  for (let i = 0; i < n; i++) if (!mask[i] && !seen[i]) out[i] = 1;
+  const buf = new Int32Array(n), seed = new Int32Array(1);
+  for (let i = 0; i < n; i++) {
+    if (mask[i] || seen[i]) continue;
+    seed[0] = i;
+    const cnt = flood(seed, 1, 2, buf);
+    if (cnt <= maxArea) for (let k = 0; k < cnt; k++) out[buf[k]] = 1;
+  }
   return out;
 }
 
@@ -590,11 +624,18 @@ export function labelComponents(mask, w, h, dt) {
 
 // ---------- 藥錠半徑估計：各元件最大 EDT（內切圓半徑）的高分位數 ----------
 // 內切圓半徑不會因相連而變大，但碎片、半錠、被刻痕切開的錠會把它拉低，所以取高分位數
+// 以內切圓面積（maxDt）加權：幾十條細長的袋子邊緣／反光（內切圓很小）合起來的權重也比不過幾顆藥，R 不會被拉低
 function estimateRadius(comps, q = 0.8, minArea = 20) {
-  let rs = comps.filter(c => c.area >= minArea).map(c => Math.sqrt(c.maxDt)).sort((a, b) => a - b);
-  if (rs.length < 3) rs = comps.filter(c => c.area >= 20).map(c => Math.sqrt(c.maxDt)).sort((a, b) => a - b);
+  let rs = comps.filter(c => c.area >= minArea);
+  if (rs.length < 3) rs = comps.filter(c => c.area >= 20);
   if (!rs.length) return 0;
-  return rs[Math.min(rs.length - 1, Math.floor(rs.length * q))];
+  rs = rs.map(c => c.maxDt).sort((a, b) => a - b);
+  let tot = 0;
+  for (const v of rs) tot += v;
+  if (tot <= 0) return 0;
+  let acc = 0;
+  for (const v of rs) { acc += v; if (acc >= tot * q) return Math.sqrt(v); }
+  return Math.sqrt(rs[rs.length - 1]);
 }
 
 // ---------- 拆分相連藥錠：EDT 波峰 → 非極大抑制 → 頸部測試 ----------

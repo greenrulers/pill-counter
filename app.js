@@ -2,7 +2,7 @@
 import { countPills } from './counter.js';
 import * as DB from './db.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const $ = (s) => document.querySelector(s);
 const SETTINGS_KEY = 'pc_settings_v1', TARGET_KEY = 'pc_target_v1', TIP_KEY = 'pc_tip_v1';
 const defaultSettings = { sensitivity: 0, polarity: 'auto', split: true, showMask: false, live: false, maxSide: 1000, autoSave: false };
@@ -18,7 +18,7 @@ const els = {
   btnSettings: $('#btnSettings'), btnHistory: $('#btnHistory'), dlgSettings: $('#dlgSettings'), dlgHistory: $('#dlgHistory'), dlgDetail: $('#dlgDetail'),
   sensitivity: $('#sensitivity'), sensVal: $('#sensVal'), polarity: $('#polarity'), split: $('#split'), showMask: $('#showMask'), maxSide: $('#maxSide'), autoSave: $('#autoSave'),
   resetSettings: $('#resetSettings'), historyBody: $('#historyBody'), clearHistory: $('#clearHistory'), exportCsv: $('#exportCsv'), storageInfo: $('#storageInfo'),
-  detailCanvas: $('#detailCanvas'), dTitle: $('#dTitle'), dDrug: $('#dDrug'), dMemo: $('#dMemo'), dSave: $('#dSave'), dShare: $('#dShare'), dReopen: $('#dReopen'), dDelete: $('#dDelete'), dMeta: $('#dMeta'),
+  detailCanvas: $('#detailCanvas'), dTitle: $('#dTitle'), dDrug: $('#dDrug'), dMemo: $('#dMemo'), dSave: $('#dSave'), dShare: $('#dShare'), dShareRaw: $('#dShareRaw'), dReopen: $('#dReopen'), dDelete: $('#dDelete'), dMeta: $('#dMeta'),
   installTip: $('#installTip'), installClose: $('#installClose'), about: $('#about'),
 };
 const ctx = els.canvas.getContext('2d');
@@ -150,6 +150,8 @@ async function analyze(img) {
     console.info(`辨識 ${img.width}×${img.height} 用了 ${Math.round(performance.now() - t0)} ms`);
     if (res.warnings.includes('low_contrast')) toast('藥和托盤的顏色太接近，建議換深色托盤或白紙');
     else if (res.warnings.includes('no_foreground')) toast('畫面裡好像沒有藥');
+    else if (res.warnings.includes('clutter')) toast('背景有袋子邊緣／反光等雜訊（已略過一部分）：建議把藥倒在單色托盤上，或靠近拍讓藥佔滿畫面');
+    else if (res.warnings.includes('mostly_uncertain')) toast('超過一半標記不確定：請靠近拍讓藥佔滿畫面，或換單色托盤');
     if (settings.autoSave && res.count > 0) saveRecord(true);
   } catch (e) {
     console.error(e); toast('辨識失敗：' + (e && e.message || e));
@@ -453,7 +455,7 @@ async function openDetail(id) {
       drawMarkers(dctx, rec.markers.map((m) => ({ x: m.x, y: m.y, uncertain: !!m.u, manual: !!m.m })), rec.R || 12, true);
     } catch { dc.hidden = true; }
   } else { dc.hidden = true; }
-  els.dReopen.disabled = !rec.image; els.dShare.disabled = !rec.image;
+  els.dReopen.disabled = !rec.image; els.dShare.disabled = !rec.image; els.dShareRaw.disabled = !rec.image;
   els.dlgDetail.showModal();
 }
 els.dlgDetail.addEventListener('close', () => { if (detail && detail.bmp && detail.bmp.close) detail.bmp.close(); detail = null; });
@@ -476,6 +478,15 @@ els.dShare.addEventListener('click', async () => {
   const text = `${r.drug ? r.drug + ' ' : ''}${r.count} 顆${r.target != null ? `（預定 ${r.target}）` : ''} ${fmtTime(r.t)}`;
   if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
   download(blob, name);
+});
+els.dShareRaw.addEventListener('click', async () => {
+  if (!detail || !detail.rec.image) return;
+  const r = detail.rec;
+  const name = `數藥原圖_${r.drug || '未命名'}_自動${r.auto ?? r.count}顆_${new Date(r.t).toISOString().slice(0, 10)}.jpg`;
+  const file = new File([r.image], name, { type: 'image/jpeg' });
+  const text = `數藥小幫手回報：自動辨識 ${r.auto ?? r.count} 顆，實際 ${r.count} 顆，R=${r.R}，${r.w}×${r.h}，版本 ${VERSION}`;
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  download(r.image, name);
 });
 els.dReopen.addEventListener('click', async () => {
   if (!detail || !detail.bmp) return;
